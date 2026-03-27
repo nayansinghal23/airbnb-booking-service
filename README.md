@@ -29,3 +29,9 @@ echo PORT=3000 >> .env
 ```
 npm run dev
 ```
+
+6. To sync the database with schema.prisma
+
+```
+npx prisma migrate dev --name <commit_name>
+```
