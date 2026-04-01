@@ -35,3 +35,9 @@ npm run dev
 ```
 npx prisma migrate dev --name <commit_name>
 ```
+
+7. To sync the prisma-client
+
+```
+npx prisma generate
+```
