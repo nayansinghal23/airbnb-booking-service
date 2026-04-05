@@ -5,7 +5,7 @@ import {
   createBooking,
   createIdempotencyKey,
   finalizeIdempotencyKey,
-  getIdempotencyKey,
+  getIdempotencyKeyWithLock,
 } from "../repositories/booking.repository";
 import { generateIdempotencyKey } from "../utils/generateIdempotencyKeys";
 import {
@@ -14,6 +14,7 @@ import {
   NotFoundError,
 } from "../utils/errors/app.error";
 import { CreateBookingDto } from "../dto/booking.dto";
+import { prisma } from "../lib/prisma";
 
 export async function createBookingService({
   userId,
@@ -40,16 +41,20 @@ export async function createBookingService({
   };
 }
 
+// For 2 parallel requests from same user, idempotency key will be different, hence we can take a lock.
 export async function confirmBookingService(idempotencyKey: string) {
-  const idempotencyKeyData = await getIdempotencyKey(idempotencyKey);
-
-  if (!idempotencyKeyData) throw new NotFoundError("Invalid idempotency key");
-
-  if (idempotencyKeyData.finalized)
-    throw new ConflictError("Idempotency key already finalized");
-
-  const booking = await changeBookingStatus(idempotencyKeyData.bookingId, BookingStatus.CONFIRMED);
-  await finalizeIdempotencyKey(idempotencyKeyData.id);
-
-  return booking;
+  return await prisma.$transaction(async (tx) => {
+    const idempotencyKeyData = await getIdempotencyKeyWithLock(tx, idempotencyKey);
+  
+    if (!idempotencyKeyData) throw new NotFoundError("Idempotency key not found");
+  
+    if (idempotencyKeyData.finalized) {
+      throw new ConflictError("Idempotency key already finalized");
+    }
+  
+    const booking = await changeBookingStatus(tx, idempotencyKeyData.bookingId, BookingStatus.CONFIRMED);
+    await finalizeIdempotencyKey(tx, idempotencyKeyData.id);
+  
+    return booking;
+  });
 }
