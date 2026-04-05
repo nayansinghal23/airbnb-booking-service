@@ -15,6 +15,8 @@ import {
 } from "../utils/errors/app.error";
 import { CreateBookingDto } from "../dto/booking.dto";
 import { prisma } from "../lib/prisma";
+import { redlock } from "../config/redis.config";
+import { serverConfig } from "../config";
 
 export async function createBookingService({
   userId,
@@ -22,23 +24,30 @@ export async function createBookingService({
   bookingAmount,
   totalGuests,
 }: CreateBookingDto) {
-  const booking = await createBooking({
-    hotelId,
-    userId,
-    bookingAmount,
-    totalGuests,
-  });
+  try {
+    const TTL = serverConfig.REDIS_LOCK_TTL;
+    const bookingResource = `hotel:${hotelId}`; // hotelId is the resource that we want to lock
+    await redlock.acquire([bookingResource], TTL);
 
-  if (!booking) throw new InternalServerError("Failed to create booking");
-
-  const idempotencyKey = generateIdempotencyKey();
-
-  await createIdempotencyKey(idempotencyKey, booking.id);
-
-  return {
-    bookingId: booking.id,
-    idempotencyKey,
-  };
+    const booking = await createBooking({
+      hotelId,
+      userId,
+      bookingAmount,
+      totalGuests,
+    });
+  
+    if (!booking) throw new InternalServerError("Failed to create booking");
+    
+    const idempotencyKey = generateIdempotencyKey();
+    await createIdempotencyKey(idempotencyKey, booking.id);
+  
+    return {
+      bookingId: booking.id,
+      idempotencyKey,
+    };
+  } catch (error) {
+    throw new InternalServerError("Failed to acquire lock for booking resource");
+  }
 }
 
 // For 2 parallel requests from same user, idempotency key will be different, hence we can take a lock.
